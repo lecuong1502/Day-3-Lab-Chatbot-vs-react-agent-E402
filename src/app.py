@@ -150,6 +150,42 @@ def _format_action_call(tool_name: str, args: list, kwargs: dict) -> str:
     return f"{tool_name}({', '.join(parts)})"
 
 
+_SCORE_OBS_RE = re.compile(r"Điểm tương thích giữa .*?: (\d{1,3})/100")
+
+
+def _validate_final_answer(final_answer: str, transcript: str) -> str:
+    """
+    Guardrail code-level (bổ sung cho Guardrail #2 trong REACT_SYSTEM_PROMPT):
+    Nếu transcript có Observation chứa điểm tương thích thật (từ tool
+    calculate_compatibility_score), nhưng Final Answer của LLM lại nêu một
+    con số KHÁC (hallucination), thì override bằng Observation thật thay vì
+    tin tưởng LLM. Ngăn trường hợp LLM tự "làm tròn cho đẹp" hoặc bịa số.
+    """
+    real_scores = _SCORE_OBS_RE.findall(transcript)
+    if not real_scores:
+        return final_answer  # Không có điểm số nào để đối chiếu, giữ nguyên
+
+    real_score = real_scores[-1]  # Lấy Observation điểm số gần nhất/cuối cùng
+    claimed_scores = re.findall(r"(\d{1,3})\s*/\s*100", final_answer)
+
+    if claimed_scores and real_score not in claimed_scores:
+        last_score_obs_match = None
+        for m in re.finditer(r"Observation:\s*(Điểm tương thích giữa.*?/100\.[^\n]*)", transcript):
+            last_score_obs_match = m
+        safe_text = last_score_obs_match.group(1) if last_score_obs_match else f"Điểm tương thích: {real_score}/100."
+        print(
+            f"🛡️ ANTI-HALLUCINATION GUARDRAIL TRIGGERED: LLM nêu điểm {claimed_scores} "
+            f"nhưng Observation thật là {real_score}/100. Đã override Final Answer."
+        )
+        return (
+            f"{safe_text} "
+            f"(Lưu ý: câu trả lời đã được hệ thống hiệu chỉnh lại theo đúng dữ liệu thật từ tool, "
+            f"tránh sai lệch so với kết quả tính toán gốc.)"
+        )
+
+    return final_answer
+
+
 def run_react_agent(user_query: str, provider):
     """
     Vòng lặp ReAct Agent thật (Thought -> Action -> Observation) có Guardrails:
@@ -204,6 +240,8 @@ def run_react_agent(user_query: str, provider):
         )
         print(f"🛡️ GUARDRAIL TRIGGERED: Đã đạt giới hạn tối đa {MAX_ITERATIONS} bước. Ngắt lặp an toàn!")
         print(f"🏁 Final Answer (Safe Fallback): {final_answer}")
+    else:
+        final_answer = _validate_final_answer(final_answer, transcript)
 
     return final_answer
 

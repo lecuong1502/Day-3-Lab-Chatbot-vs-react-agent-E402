@@ -147,6 +147,20 @@ sau đó kết thúc bằng:
 Thought: Tôi đã có đủ thông tin để trả lời.
 Final Answer: <câu trả lời cuối cùng cho người dùng, thân thiện và rõ ràng>
 
+QUY TẮC ĐỊNH DẠNG BẮT BUỘC (nghiêm ngặt, không có ngoại lệ):
+- MỖI lượt phản hồi CHỈ được chứa MỘT trong hai dạng: (Thought + Action) HOẶC
+  (Thought + Final Answer). KHÔNG BAO GIỜ viết cả hai Action và Final Answer
+  trong cùng một lượt, và KHÔNG BAO GIỜ tự viết dòng "Observation:" (dòng đó
+  do hệ thống điền, không phải bạn).
+- Dòng "Action:" PHẢI đúng cú pháp `Action: tên_tool('tham_số_1', 'tham_số_2')`
+  (dùng dấu ngoặc đơn bao quanh tham số dạng chuỗi). Không thêm chữ thừa,
+  không thêm markdown (**, `, #) vào dòng Action.
+- Dòng "Final Answer:" PHẢI TRÍCH NGUYÊN VĂN các con số/dữ kiện đã xuất hiện
+  trong Observation (điểm số, MBTI, sở thích...) — TUYỆT ĐỐI không được làm
+  tròn, ước lượng lại, "cho đẹp hơn", hoặc suy ra một con số khác với con số
+  đã có trong Observation. Nếu Observation ghi "60/100" thì Final Answer phải
+  ghi đúng "60/100", không được viết thành số khác dưới bất kỳ hình thức nào.
+
 --------------------------------------------------------------------------
 LUỒNG SUY LUẬN GỢI Ý CHO BÀI TOÁN GHÉP ĐÔI (ví dụ mẫu bắt buộc)
 --------------------------------------------------------------------------

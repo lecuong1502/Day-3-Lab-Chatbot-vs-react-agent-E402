@@ -17,6 +17,7 @@ _MOCK_USERS = {
         "zodiac": "Bọ Cạp",
         "interests": ["đọc sách", "du lịch", "cà phê"],
         "values": ["gia đình", "ổn định"],
+        "relationship_status": "độc thân",
     },
     "user_002": {
         "name": "Lan",
@@ -26,6 +27,7 @@ _MOCK_USERS = {
         "zodiac": "Sư Tử",
         "interests": ["du lịch", "âm nhạc", "nhiếp ảnh"],
         "values": ["tự do", "trải nghiệm"],
+        "relationship_status": "độc thân",
     },
     "user_003": {
         "name": "Huy",
@@ -35,6 +37,17 @@ _MOCK_USERS = {
         "zodiac": "Kim Ngưu",
         "interests": ["thể thao", "nấu ăn"],
         "values": ["ổn định", "sự nghiệp"],
+        "relationship_status": "độc thân",
+    },
+    "user_004": {
+        "name": "Trang",
+        "age": 25,
+        "city": "Hà Nội",
+        "mbti": "ESFJ",
+        "zodiac": "Cự Giải",
+        "interests": ["du lịch", "nấu ăn"],
+        "values": ["gia đình"],
+        "relationship_status": "đang hẹn hò",
     },
 }
 
@@ -60,7 +73,8 @@ def get_user_profile(user_id: str) -> str:
         f"Hồ sơ {user_id} ({user['name']}): {user['age']} tuổi, sống tại {user['city']}. "
         f"MBTI: {user['mbti']}, Cung: {user['zodiac']}. "
         f"Sở thích: {', '.join(user['interests'])}. "
-        f"Giá trị sống: {', '.join(user['values'])}."
+        f"Giá trị sống: {', '.join(user['values'])}. "
+        f"Tình trạng mối quan hệ: {user['relationship_status']}."
     )
 
 
@@ -312,6 +326,100 @@ def flag_red_flags(user_id: str) -> str:
         return f"LỖI: Không tìm thấy hồ sơ cho user_id '{user_id}'."
     # Đây là bản mock đơn giản, luôn trả về "an toàn" cho dữ liệu demo.
     return f"Không phát hiện dấu hiệu cảnh báo nào trong hồ sơ {user_id}."
+
+
+# ---------------------------------------------------------------------------
+# Hàm tiện ích cho API/UI (KHÔNG thuộc AVAILABLE_TOOLS — Agent không tự gọi
+# các hàm này, chỉ backend/Streamlit dùng để quản lý dữ liệu demo)
+# ---------------------------------------------------------------------------
+
+VALID_MBTI = {
+    "INTJ", "INTP", "ENTJ", "ENTP", "INFJ", "INFP", "ENFJ", "ENFP",
+    "ISTJ", "ISFJ", "ESTJ", "ESFJ", "ISTP", "ISFP", "ESTP", "ESFP",
+}
+VALID_ZODIAC = [
+    "Bạch Dương", "Kim Ngưu", "Song Tử", "Cự Giải", "Sư Tử", "Xử Nữ",
+    "Thiên Bình", "Bọ Cạp", "Nhân Mã", "Ma Kết", "Bảo Bình", "Song Ngư",
+]
+VALID_RELATIONSHIP_STATUS = ["độc thân", "đang hẹn hò", "đã kết hôn", "không muốn tiết lộ"]
+
+
+def list_all_users() -> list:
+    """
+    Trả về danh sách tóm tắt toàn bộ user hiện có trong hệ thống (dùng cho
+    dropdown chọn user trên UI). Không phải một "tool" của Agent.
+
+    Returns:
+        list[dict]: Mỗi phần tử gồm user_id, name, city, age.
+    """
+    return [
+        {"user_id": uid, "name": u["name"], "city": u["city"], "age": u["age"]}
+        for uid, u in _MOCK_USERS.items()
+    ]
+
+
+def register_user_profile(
+    user_id: str,
+    name: str,
+    age: int,
+    city: str,
+    mbti: str,
+    zodiac: str,
+    interests: list,
+    values: list,
+    relationship_status: str = "độc thân",
+) -> dict:
+    """
+    Đăng ký (thêm mới hoặc cập nhật) một hồ sơ người dùng vào hệ thống mock,
+    theo đúng schema mà get_user_profile/calculate_compatibility_score... sử dụng.
+    Dùng bởi API backend khi người dùng nhập hồ sơ mới trên giao diện Streamlit.
+
+    Args:
+        user_id (str): Mã định danh duy nhất (Ví dụ: 'user_005').
+        name (str): Tên hiển thị.
+        age (int): Tuổi.
+        city (str): Thành phố sinh sống.
+        mbti (str): 1 trong 16 loại MBTI hợp lệ (không phân biệt hoa/thường).
+        zodiac (str): 1 trong 12 cung hoàng đạo hợp lệ.
+        interests (list[str]): Danh sách sở thích.
+        values (list[str]): Danh sách giá trị sống.
+        relationship_status (str, optional): Một trong VALID_RELATIONSHIP_STATUS.
+            Mặc định 'độc thân'.
+
+    Returns:
+        dict: {"success": True, "user_id": ...} nếu hợp lệ, hoặc
+            {"success": False, "error": "..."} nếu dữ liệu không hợp lệ.
+    """
+    if not user_id or not user_id.strip():
+        return {"success": False, "error": "user_id không được để trống."}
+
+    mbti_upper = mbti.strip().upper()
+    if mbti_upper not in VALID_MBTI:
+        return {"success": False, "error": f"MBTI '{mbti}' không hợp lệ. Phải là 1 trong 16 loại MBTI chuẩn."}
+
+    if zodiac not in VALID_ZODIAC:
+        return {"success": False, "error": f"Cung hoàng đạo '{zodiac}' không hợp lệ."}
+
+    if relationship_status not in VALID_RELATIONSHIP_STATUS:
+        return {"success": False, "error": f"Tình trạng mối quan hệ '{relationship_status}' không hợp lệ."}
+
+    if not interests:
+        return {"success": False, "error": "Cần ít nhất 1 sở thích."}
+
+    if not values:
+        return {"success": False, "error": "Cần ít nhất 1 giá trị sống."}
+
+    _MOCK_USERS[user_id.strip()] = {
+        "name": name.strip(),
+        "age": int(age),
+        "city": city.strip(),
+        "mbti": mbti_upper,
+        "zodiac": zodiac,
+        "interests": [i.strip() for i in interests if i.strip()],
+        "values": [v.strip() for v in values if v.strip()],
+        "relationship_status": relationship_status,
+    }
+    return {"success": True, "user_id": user_id.strip()}
 
 
 # ---------------------------------------------------------------------------

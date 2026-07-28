@@ -3,8 +3,11 @@
 File chính ghép nối tất cả các thành phần: Tools + Prompts + Test Cases + Multi-Provider.
 """
 
+import ast
+import inspect
 import json
 import os
+import re
 import sys
 from dotenv import load_dotenv
 
@@ -16,7 +19,7 @@ if sys.stdout.encoding != 'utf-8':
     except Exception:
         pass
 
-from tools import AVAILABLE_TOOLS, get_user_profile, calculate_compatibility_score
+from tools import AVAILABLE_TOOLS
 from prompts import CHATBOT_BASELINE_PROMPT, REACT_SYSTEM_PROMPT, MAX_ITERATIONS
 from providers import get_llm_provider
 
@@ -48,42 +51,161 @@ def run_baseline_chatbot(user_query: str, provider):
     print(f"🤖 Chatbot trả lời:\n{response}")
 
 
+# ---------------------------------------------------------------------------
+# ReAct Loop internals: parser (Thought/Action/Final Answer) + tool executor
+# ---------------------------------------------------------------------------
+
+_ACTION_PAREN_RE = re.compile(r"Action:\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\(([^\n]*)\)", re.IGNORECASE)
+_ACTION_BRACKET_RE = re.compile(r"Action:\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\[([^\n]*)\]", re.IGNORECASE)
+_FINAL_ANSWER_RE = re.compile(r"Final Answer:\s*(.+)", re.IGNORECASE | re.DOTALL)
+_OBSERVATION_RE = re.compile(r"Observation\s*:", re.IGNORECASE)
+
+
+def _strip_fabricated_observation(text: str) -> str:
+    """
+    Anti-Hallucination Guardrail: Observation CHỈ được hệ thống điền từ tool
+    thật. Nếu LLM tự bịa luôn cả Observation (và có thể cả Final Answer dựa
+    trên Observation giả đó), cắt bỏ từ Observation trở đi để ép Agent phải
+    đợi kết quả tool thật ở vòng lặp kế tiếp.
+    """
+    match = _OBSERVATION_RE.search(text)
+    if match:
+        return text[: match.start()].rstrip()
+    return text
+
+
+def _parse_call_args(raw_args: str):
+    """Parse chuỗi tham số dạng lệnh gọi hàm Python bằng ast.literal_eval
+    (chỉ nhận literal, không eval code tùy ý) -> (args, kwargs)."""
+    call_node = ast.parse(f"f({raw_args})", mode="eval").body
+    args = [ast.literal_eval(a) for a in call_node.args]
+    kwargs = {kw.arg: ast.literal_eval(kw.value) for kw in call_node.keywords}
+    return args, kwargs
+
+
+def parse_llm_response(raw_text: str) -> dict:
+    """
+    Phân tích 1 lượt phản hồi của LLM trong vòng lặp ReAct.
+
+    Trả về dict:
+      {"type": "final", "content": str}
+      {"type": "action", "tool": str, "args": list, "kwargs": dict}
+      {"type": "invalid", "reason": str}
+    """
+    text = raw_text.replace("**", "")  # bỏ markdown bold gây lệch regex
+    text = _strip_fabricated_observation(text)
+
+    final_match = _FINAL_ANSWER_RE.search(text)
+    if final_match:
+        return {"type": "final", "content": final_match.group(1).strip()}
+
+    is_bracket = False
+    match = _ACTION_PAREN_RE.search(text)
+    if not match:
+        match = _ACTION_BRACKET_RE.search(text)
+        is_bracket = True
+
+    if not match:
+        return {
+            "type": "invalid",
+            "reason": "Không tìm thấy 'Action: tool(...)' hay 'Final Answer:' hợp lệ trong phản hồi.",
+        }
+
+    tool_name, raw_args = match.group(1), match.group(2).strip()
+    try:
+        if is_bracket:
+            args = ast.literal_eval(f"[{raw_args}]") if raw_args else []
+            kwargs = {}
+        else:
+            args, kwargs = _parse_call_args(raw_args)
+    except Exception as e:
+        return {
+            "type": "invalid",
+            "reason": f"Cú pháp tham số không hợp lệ trong '{tool_name}({raw_args})' ({e}).",
+        }
+
+    return {"type": "action", "tool": tool_name, "args": args, "kwargs": kwargs}
+
+
+def execute_tool(tool_name: str, args: list, kwargs: dict) -> str:
+    """Thực thi tool thật trong AVAILABLE_TOOLS. Luôn trả về string quan sát
+    được (Observation), KHÔNG BAO GIỜ để Exception làm crash vòng lặp."""
+    tool_func = AVAILABLE_TOOLS.get(tool_name)
+    if tool_func is None:
+        valid_tools = ", ".join(AVAILABLE_TOOLS.keys())
+        return f"LỖI: Tool '{tool_name}' không tồn tại. Các tool hợp lệ gồm: [{valid_tools}]"
+    try:
+        bound = inspect.signature(tool_func).bind(*args, **kwargs)
+        bound.apply_defaults()
+    except TypeError as e:
+        return f"LỖI: Tham số truyền cho tool '{tool_name}' không hợp lệ ({e})."
+    try:
+        return str(tool_func(*bound.args, **bound.kwargs))
+    except Exception as e:
+        return f"LỖI: Tool '{tool_name}' gặp sự cố khi thực thi: {e}"
+
+
+def _format_action_call(tool_name: str, args: list, kwargs: dict) -> str:
+    parts = [repr(a) for a in args] + [f"{k}={v!r}" for k, v in kwargs.items()]
+    return f"{tool_name}({', '.join(parts)})"
+
+
 def run_react_agent(user_query: str, provider):
     """
-    Dựng vòng lặp ReAct Agent (Thought -> Action -> Observation) có Guardrails.
+    Vòng lặp ReAct Agent thật (Thought -> Action -> Observation) có Guardrails:
+      - Mỗi vòng gọi LLM sinh Thought+Action dựa trên toàn bộ transcript.
+      - Ứng dụng tự parse Action, tự gọi tool thật, tự chèn Observation thật
+        (LLM không được tự bịa Observation).
+      - Dừng khi có Final Answer hợp lệ, hoặc chạm MAX_ITERATIONS (Guardrail).
     """
     print(f"\n🤖 [REACT AGENT] Câu hỏi: {user_query}")
+
+    transcript = f"Question: {user_query}\n"
     step = 0
-    
+    final_answer = None
+
     while step < MAX_ITERATIONS:
         step += 1
         print(f"\n--- 🔄 Vòng lặp ReAct (Step {step}/{MAX_ITERATIONS}) ---")
-        
-        if step == 1:
-            print("🧠 Thought: Cần lấy hồ sơ của user_001 trước.")
-            print("🛠️ Action: get_user_profile['user_001']")
 
-            obs_a = get_user_profile("user_001")
-            print(f"👁️ Observation: {obs_a}")
+        llm_output = provider.generate(transcript, system_prompt=REACT_SYSTEM_PROMPT)
+        parsed = parse_llm_response(llm_output)
 
-        elif step == 2:
-            print("🧠 Thought: Cần lấy thêm hồ sơ của user_002 để so sánh.")
-            print("🛠️ Action: get_user_profile['user_002']")
-
-            obs_b = get_user_profile("user_002")
-            print(f"👁️ Observation: {obs_b}")
-
-        elif step == 3:
-            print("🧠 Thought: Đã có đủ hồ sơ 2 người, giờ tính điểm tương thích.")
-            print("🛠️ Action: calculate_compatibility_score['user_001', 'user_002']")
-
-            obs_score = calculate_compatibility_score("user_001", "user_002")
-            print(f"👁️ Observation: {obs_score}")
-            print(f"🏁 Final Answer: {obs_score}")
+        if parsed["type"] == "final":
+            final_answer = parsed["content"]
+            print(f"🧠 {llm_output.strip()}")
+            print(f"🏁 Final Answer: {final_answer}")
             break
-            
-    if step >= MAX_ITERATIONS:
+
+        if parsed["type"] == "invalid":
+            observation = (
+                f"LỖI ĐỊNH DẠNG: {parsed['reason']} "
+                "Hãy trả lời đúng định dạng 'Thought: ...\\nAction: tool_name(...)' "
+                "hoặc 'Thought: ...\\nFinal Answer: ...'."
+            )
+            print(f"🧠 {llm_output.strip()}")
+            print(f"👁️ Observation: {observation}")
+            transcript += f"{llm_output.strip()}\nObservation: {observation}\n"
+            continue
+
+        tool_name, args, kwargs = parsed["tool"], parsed["args"], parsed["kwargs"]
+        print(f"🧠 {llm_output.strip()}")
+        print(f"🛠️ Action: {_format_action_call(tool_name, args, kwargs)}")
+
+        observation = execute_tool(tool_name, args, kwargs)
+        print(f"👁️ Observation: {observation}")
+
+        transcript += f"{llm_output.strip()}\nObservation: {observation}\n"
+
+    if final_answer is None:
+        final_answer = (
+            "Xin lỗi, tôi chưa thể xử lý đầy đủ yêu cầu này. Bạn có thể cung cấp "
+            "thêm thông tin (vd: user_id chính xác) để tôi hỗ trợ tốt hơn không?"
+        )
         print(f"🛡️ GUARDRAIL TRIGGERED: Đã đạt giới hạn tối đa {MAX_ITERATIONS} bước. Ngắt lặp an toàn!")
+        print(f"🏁 Final Answer (Safe Fallback): {final_answer}")
+
+    return final_answer
 
 
 if __name__ == "__main__":
@@ -107,3 +229,9 @@ if __name__ == "__main__":
     
     print("\n--- DEMO 2: CHẠY TRÊN REACT AGENT ---")
     run_react_agent(sample_query, provider)
+
+    # DEMO 3: Câu bẫy (Edge Case) kiểm tra Guardrail #7 - Relationship Status
+    edge_case = next((t for t in tests if t["id"] == "TC11"), None)
+    if edge_case:
+        print("\n--- DEMO 3: CHẠY TRÊN REACT AGENT (Edge Case - Guardrail #7) ---")
+        run_react_agent(edge_case["query"], provider)

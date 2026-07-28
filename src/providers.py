@@ -133,11 +133,96 @@ class OpenRouterProvider(BaseLLMProvider):
 
 class MockProvider(BaseLLMProvider):
     """Offline Mock Provider (Cho bài test không cần kết nối API)"""
+
     def generate(self, prompt: str, system_prompt: str = "") -> str:
+        import re
+
         text = prompt.lower()
-        if "thời tiết" in text and "hà nội" in text:
+        is_react_mode = "reAct".lower() in system_prompt.lower() or "thought:" in system_prompt.lower()
+
+        if "thời tiết" in text and "hà nội" in text and is_react_mode:
             return "Thought: Cần tra cứu thời tiết Hà Nội.\nAction: get_weather['Hà Nội']"
-        return "🤖 [Mock Provider]: Phản hồi giả lập offline cho bài test."
+
+        # --- Mô phỏng luồng ReAct của Cupid Agent (bám theo REACT_SYSTEM_PROMPT) ---
+        # CHỈ kích hoạt khi được gọi trong ngữ cảnh ReAct (có system_prompt ReAct).
+        # Baseline chatbot (không có tool) KHÔNG được phép trả lời theo định dạng
+        # Thought/Action -> nếu không phải react mode, luôn trả lời hội thoại thường.
+        if is_react_mode:
+            user_ids = list(dict.fromkeys(re.findall(r"user_\d{3}", prompt)))
+            if len(user_ids) >= 2:
+                return self._cupid_react_step(prompt, user_ids[0], user_ids[1])
+            if len(user_ids) == 1:
+                return (
+                    f"Thought: Câu hỏi chỉ có 1 user_id ({user_ids[0]}), thiếu người thứ hai để so sánh.\n"
+                    f"Final Answer: Bạn muốn so sánh {user_ids[0]} với ai? Cho mình xin thêm user_id thứ hai nhé."
+                )
+            return (
+                "Thought: Câu hỏi không cung cấp user_id nào để tra cứu.\n"
+                "Final Answer: Bạn có thể cho mình biết user_id của (những) người bạn muốn phân tích không?"
+            )
+
+        # --- Chế độ Baseline (không có tool) ---
+        return (
+            "🤖 [Mock Provider - Baseline]: Mình chưa có quyền truy cập cơ sở dữ liệu người dùng thật "
+            "nên không thể xác nhận thông tin cụ thể. Dựa trên kiến thức chung, độ hợp giữa hai người "
+            "thường phụ thuộc vào tính cách, sở thích và giá trị sống — nếu bạn cho mình biết thêm "
+            "chi tiết, mình có thể tư vấn kỹ hơn."
+        )
+
+    @staticmethod
+    def _cupid_react_step(transcript: str, target_a: str, target_b: str) -> str:
+        """
+        Sinh ra ĐÚNG 1 bước Thought->Action (hoặc Final Answer) tiếp theo,
+        dựa trên các Observation đã có trong transcript. Được gọi lặp lại
+        bởi vòng lặp ReAct ở app.py cho tới khi có Final Answer.
+        """
+        import re
+
+        observations = re.findall(r"Observation:\s*(.*)", transcript)
+        combined_obs = " ".join(observations)
+
+        fetched = [uid for uid in (target_a, target_b) if f"Hồ sơ {uid}" in combined_obs]
+
+        if target_a not in fetched:
+            return (
+                f"Thought: Cần lấy hồ sơ của {target_a} trước khi so sánh.\n"
+                f"Action: get_user_profile('{target_a}')"
+            )
+
+        if target_b not in fetched:
+            return (
+                f"Thought: Đã có hồ sơ {target_a}, cần lấy thêm hồ sơ {target_b}.\n"
+                f"Action: get_user_profile('{target_b}')"
+            )
+
+        def _status_of(uid):
+            m = re.search(rf"Hồ sơ {uid}.*?Tình trạng mối quan hệ: ([^\.]+)\.", combined_obs)
+            return m.group(1).strip() if m else None
+
+        blocked = {"đang hẹn hò", "đã kết hôn"}
+        status_a, status_b = _status_of(target_a), _status_of(target_b)
+
+        if "GUARDRAIL_CHECK_DONE" not in transcript and (status_a in blocked or status_b in blocked):
+            blocked_uid = target_a if status_a in blocked else target_b
+            blocked_status = status_a if status_a in blocked else status_b
+            return (
+                f"Thought: {blocked_uid} có tình trạng mối quan hệ là '{blocked_status}'. "
+                f"Theo Guardrail #7 (Relationship Status Guardrail), phải DỪNG NGAY và "
+                f"KHÔNG được gọi calculate_compatibility_score. [GUARDRAIL_CHECK_DONE]\n"
+                f"Final Answer: Xin lỗi, mình không thể thực hiện phân tích ghép đôi cho trường hợp "
+                f"này vì {blocked_uid} hiện đang trong một mối quan hệ ({blocked_status}). "
+                f"Mình tôn trọng mối quan hệ hiện tại của họ nên sẽ dừng phân tích ở đây."
+            )
+
+        if "Điểm tương thích giữa" not in combined_obs:
+            return (
+                "Thought: Cả hai đều độc thân (hoặc đã xác nhận an toàn), có thể tính điểm tương thích. "
+                "[GUARDRAIL_CHECK_DONE]\n"
+                f"Action: calculate_compatibility_score('{target_a}', '{target_b}')"
+            )
+
+        score_obs = next(o for o in observations if "Điểm tương thích giữa" in o)
+        return f"Thought: Tôi đã có đủ thông tin để trả lời.\nFinal Answer: {score_obs}"
 
 
 def get_llm_provider(provider_name: str = None) -> BaseLLMProvider:

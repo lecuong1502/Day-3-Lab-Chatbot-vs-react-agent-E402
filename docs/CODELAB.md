@@ -1,9 +1,9 @@
 ---
 id: "day3-lab-chatbot-vs-react-agent-e402"
-title: "Lab 03 — Chatbot vs ReAct Agent (Phòng E402)"
+title: "Lab 03 — Chatbot vs ReAct Agent (Phòng D303)"
 duration: 240
 author: "VinUni AI Codelab × GDGoC"
-updated: "2026-07-27"
+updated: "2026-07-28"
 category: "AI Agent"
 description: "Xây dựng Chatbot baseline, thiết kế Tool Specs, lắp ReAct Agent Loop với Guardrails và đánh giá so sánh trên bộ 5 Test Cases thực tế ."
 published: true

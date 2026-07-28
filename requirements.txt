@@ -4,3 +4,6 @@ anthropic
 python-dotenv
 requests
 streamlit
+fastapi
+uvicorn
+pydantic

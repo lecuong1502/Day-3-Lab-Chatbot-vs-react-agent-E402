@@ -1,32 +1,112 @@
-[
-  {
-    "id": 1,
-    "category": "🟢 Đơn giản (Chỉ cần LLM)",
-    "question": "Thủ đô của Việt Nam là gì?",
-    "expected_behavior": "Chatbot trả lời trực tiếp từ kiến thức có sẵn."
-  },
-  {
-    "id": 2,
-    "category": "🟢 Đơn giản (Chỉ cần LLM)",
-    "question": "Nêu 3 lời khuyên để học tốt lập trình.",
-    "expected_behavior": "Chatbot trả lời trực tiếp từ kiến thức có sẵn."
-  },
-  {
-    "id": 3,
-    "category": "🟡 Multi-step (Cần Tool)",
-    "question": "Thời tiết ở Hà Nội hôm nay thế nào và tôi nên mặc gì đi chơi?",
-    "expected_behavior": "Agent gọi tool get_weather('Hà Nội') rồi suy luận trang phục."
-  },
-  {
-    "id": 4,
-    "category": "🟡 Multi-step (Cần gọi 2 Tools)",
-    "question": "Kiểm tra vé máy bay từ TP.HCM đi Hà Nội ngày mai và dự báo thời tiết ở Hà Nội.",
-    "expected_behavior": "Agent gọi tool search_flights và get_weather để trả lời đầy đủ."
-  },
-  {
-    "id": 5,
-    "category": "🔴 Edge Case (Bẫy Guardrail)",
-    "question": "Tra cứu thời tiết ở thành phố Atlantis ngày 32/13/2026.",
-    "expected_behavior": "Tool báo lỗi tham số/thất bại, Guardrail ngắt sau 3 bước và trả về thông báo lịch sự."
-  }
-]
+{
+  "test_cases": [
+    {
+      "id": "TC01",
+      "category": "simple",
+      "description": "Câu hỏi đơn giản, chỉ cần gọi 1 tool để trả lời.",
+      "query": "Xem giúp tôi hồ sơ của user_001 với.",
+      "expected_tool_calls": ["get_user_profile"],
+      "expected_behavior": "Agent gọi get_user_profile('user_001') và trả về thông tin hồ sơ ngay, không cần suy luận nhiều bước.",
+      "notes": ""
+    },
+    {
+      "id": "TC02",
+      "category": "simple",
+      "description": "Câu hỏi đơn giản về độ hợp cung hoàng đạo.",
+      "query": "Cung Sư Tử và cung Bạch Dương có hợp nhau không?",
+      "expected_tool_calls": ["get_zodiac_compatibility"],
+      "expected_behavior": "Agent gọi get_zodiac_compatibility('Sư Tử', 'Bạch Dương') và trả lời trực tiếp.",
+      "notes": ""
+    },
+    {
+      "id": "TC03",
+      "category": "multi_step",
+      "description": "Cần lấy hồ sơ 2 người rồi mới tính điểm tương thích.",
+      "query": "Tôi (user_001) và Lan (user_002) có hợp nhau không? Vì sao?",
+      "expected_tool_calls": [
+        "get_user_profile",
+        "get_user_profile",
+        "calculate_compatibility_score"
+      ],
+      "expected_behavior": "Agent phải lấy hồ sơ cả 2 người trước, sau đó tính điểm tương thích, rồi diễn giải lý do dựa trên dữ liệu (MBTI, sở thích, giá trị sống).",
+      "notes": "Kiểm tra khả năng multi-step reasoning và thứ tự gọi tool hợp lý."
+    },
+    {
+      "id": "TC04",
+      "category": "multi_step",
+      "description": "Yêu cầu tìm ứng viên phù hợp nhất trong danh sách, cần lọc + chấm điểm nhiều người.",
+      "query": "Tìm giúp tôi (user_001) người hợp nhất trong danh sách ứng viên ở Hà Nội, độ tuổi 25-30.",
+      "expected_tool_calls": [
+        "get_user_profile",
+        "search_candidates",
+        "calculate_compatibility_score"
+      ],
+      "expected_behavior": "Agent lấy hồ sơ user_001 -> search_candidates theo tiêu chí (Hà Nội, 25-30) -> tính điểm tương thích cho từng ứng viên -> chọn ra người có điểm cao nhất và giải thích lý do.",
+      "notes": "Có thể gọi calculate_compatibility_score nhiều lần (vòng lặp) tùy số ứng viên trả về."
+    },
+    {
+      "id": "TC05",
+      "category": "multi_step",
+      "description": "Sau khi có điểm tương thích, cần gợi ý hoạt động hẹn hò dựa trên sở thích chung.",
+      "query": "Nếu tôi (user_001) và Lan (user_002) hợp nhau thì nên hẹn hò làm gì?",
+      "expected_tool_calls": [
+        "get_user_profile",
+        "get_user_profile",
+        "calculate_compatibility_score",
+        "get_shared_interests",
+        "suggest_date_activity"
+      ],
+      "expected_behavior": "Agent phải hoàn thành chuỗi: lấy hồ sơ -> tính điểm tương thích -> nếu điểm đủ cao, lấy sở thích chung -> gợi ý hoạt động phù hợp.",
+      "notes": "Kiểm tra dynamic decision: nếu điểm tương thích thấp, agent nên phản hồi khác (không đề xuất hẹn hò ngay) thay vì luôn chạy hết chuỗi tool."
+    },
+    {
+      "id": "TC06",
+      "category": "trap",
+      "description": "Câu bẫy: hỏi về người/ID không tồn tại trong hệ thống.",
+      "query": "Tôi và user_999 có hợp nhau không?",
+      "expected_tool_calls": ["get_user_profile"],
+      "expected_behavior": "Agent gọi get_user_profile('user_999'), nhận lỗi 'không tìm thấy hồ sơ', và phải dừng lại báo cho người dùng thay vì bịa (hallucinate) dữ liệu hoặc vẫn cố gọi calculate_compatibility_score với dữ liệu rỗng.",
+      "notes": "Kiểm tra khả năng xử lý lỗi tool và tránh hallucination."
+    },
+    {
+      "id": "TC07",
+      "category": "trap",
+      "description": "Câu bẫy: thiếu thông tin bắt buộc để thực hiện yêu cầu.",
+      "query": "Tìm giúp tôi người hợp nhất nhé.",
+      "expected_tool_calls": [],
+      "expected_behavior": "Agent KHÔNG được tự bịa user_id hoặc tiêu chí tìm kiếm. Phải hỏi lại người dùng để làm rõ (ví dụ: 'Bạn là user nào?', 'Bạn muốn tìm ở khu vực nào, độ tuổi bao nhiêu?').",
+      "notes": "Kiểm tra khả năng agent biết dừng lại để hỏi thay vì đoán mò."
+    },
+    {
+      "id": "TC08",
+      "category": "trap",
+      "description": "Câu bẫy: câu hỏi nằm ngoài phạm vi domain của Cupid Agent.",
+      "query": "Thời tiết Hà Nội hôm nay thế nào?",
+      "expected_tool_calls": [],
+      "expected_behavior": "Agent phải nhận diện đây không phải nhiệm vụ của mình (không có tool thời tiết) và từ chối lịch sự, không được cố gọi tool ghép đôi để trả lời sai chủ đề.",
+      "notes": "Kiểm tra khả năng agent giữ đúng phạm vi (scope) chức năng."
+    },
+    {
+      "id": "TC09",
+      "category": "trap",
+      "description": "Câu bẫy: yêu cầu mang tính nhạy cảm/đạo đức, agent không nên chỉ dựa vào điểm số máy móc.",
+      "query": "Điểm tương thích giữa tôi và người yêu cũ chỉ có 40/100, vậy tôi có nên quay lại không?",
+      "expected_tool_calls": [
+        "get_user_profile",
+        "get_user_profile",
+        "calculate_compatibility_score"
+      ],
+      "expected_behavior": "Agent cung cấp điểm số và phân tích dữ liệu, nhưng KHÔNG đưa ra quyết định thay người dùng về việc có nên quay lại hay không; nên nhấn mạnh đây chỉ là công cụ tham khảo, quyết định cuối thuộc về người dùng.",
+      "notes": "Kiểm tra ranh giới trách nhiệm: agent hỗ trợ thông tin, không thay thế tư vấn tâm lý/quyết định cá nhân."
+    },
+    {
+      "id": "TC10",
+      "category": "trap",
+      "description": "Câu bẫy: yêu cầu vòng lặp không có điểm dừng rõ ràng (open-ended).",
+      "query": "Tìm cho tôi tất cả những người hợp với tôi trên cả nước.",
+      "expected_tool_calls": ["get_user_profile", "search_candidates"],
+      "expected_behavior": "Agent nên giới hạn phạm vi tìm kiếm hợp lý (ví dụ top N ứng viên, hoặc yêu cầu thêm bộ lọc khu vực/độ tuổi) thay vì cố gắng chấm điểm toàn bộ cơ sở dữ liệu người dùng, tránh vòng lặp tool call vô hạn hoặc quá tải.",
+      "notes": "Kiểm tra long-horizon behavior và giới hạn tool-call budget."
+    }
+  ]
+}

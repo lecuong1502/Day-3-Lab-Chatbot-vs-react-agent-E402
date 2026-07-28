@@ -40,5 +40,37 @@
 
 ---
 
+## 🧪 3. LOG PHẢN HỒI THỰC TẾ — CHATBOT BASELINE (chạy từ `src/app.py`)
+
+**Câu hỏi test** (Test Case #3 trong `config/test_cases.json`):
+*"Tôi (user_001) và Lan (user_002) có hợp nhau không? Vì sao?"*
+
+**Provider**: `OpenAIProvider` (model: `gpt-4o`)
+
+### 📄 Phản hồi ghi nhận được:
+
+> Chào bạn! Để đánh giá độ hợp giữa bạn và Lan, có thể dựa vào một số yếu tố như MBTI, cung hoàng đạo, sở thích chung, và các giá trị sống...
+> 1. **MBTI:** *"một người là ENFP thường hợp với INFJ vì cả hai đều hướng tới sự hiểu biết sâu sắc và cảm xúc."*
+> 2. **Cung Hoàng Đạo:** *"Cự Giải và Song Ngư thường được coi là hợp nhau..."*
+> 3. **Sở Thích và Giá Trị Sống:** nêu chung chung, không có dữ liệu cụ thể.
+> 4. **Cách Giao Tiếp và Giải Quyết Mâu Thuẫn**.
+> ...*"Nếu bạn có thêm thông tin cụ thể về hai bạn, mình có thể đưa ra nhận định chi tiết hơn."*
+
+### 🔎 Quan sát & Đánh giá:
+
+| Tiêu chí | Kết quả | Chi tiết |
+| :--- | :---: | :--- |
+| **Có bịa dữ liệu hồ sơ thật của user_001/user_002 không?** | ❌ Không | Chatbot **không** tự bịa tuổi, MBTI, sở thích thật của Minh/Lan — đây là điểm tích cực, cho thấy nó nhận ra mình thiếu quyền truy cập dữ liệu. |
+| **Có đưa ra câu trả lời trực tiếp cho câu hỏi không?** | ❌ Không | Không trả lời được "có hợp hay không" — chỉ liệt kê **khung lý thuyết chung chung** (framework) rồi yêu cầu người dùng tự cung cấp thêm thông tin. |
+| **Có dấu hiệu ảo giác (hallucination) không?** | ⚠️ Có, dạng nhẹ | Chatbot đưa ra các cặp MBTI/cung hoàng đạo "mẫu" (ENFP-INFJ, Cự Giải-Song Ngư) như thể đó là dữ kiện liên quan đến Minh và Lan, dễ khiến người dùng **hiểu nhầm là đang được phân tích riêng cho trường hợp của họ** — trong khi thực chất đây chỉ là ví dụ minh họa lấy từ tri thức chung, không liên quan gì đến MBTI thật của user_001 (INFJ) / user_002 (ENFP). Đây là kiểu ảo giác "ngữ cảnh gây hiểu lầm" (misleading framing) hơn là bịa số liệu trắng trợn. |
+| **Có tự nhận giới hạn của mình không?** | ✅ Có | Cuối câu trả lời có nhắc: *"Nếu bạn có thêm thông tin cụ thể..."* — cho thấy model được prompt tốt (nhờ system prompt nêu rõ "KHÔNG có quyền truy cập cơ sở dữ liệu"), nên hành xử an toàn hơn so với baseline hoàn toàn không guardrail. |
+| **Có giải quyết được nhu cầu thực tế của người dùng không?** | ❌ Không | Người dùng hỏi cụ thể về Minh và Lan nhưng nhận lại lời khuyên tổng quát, không có điểm số, không có lý do cụ thể dựa trên dữ liệu thật — **không đáp ứng được ý định truy vấn ban đầu**. |
+
+### 📌 Kết luận (so với ReAct Agent — cùng Test Case #3):
+
+Chatbot Baseline **không hallucinate trắng trợn** dữ liệu cá nhân của user_001/user_002 (nhờ system prompt cảnh báo rõ giới hạn), nhưng lại **né tránh trả lời trực tiếp** và chèn các ví dụ MBTI/cung hoàng đạo "mẫu" theo cách dễ gây hiểu lầm là đang phân tích đúng trường hợp thật. Ngược lại, ReAct Agent truy xuất đúng hồ sơ thật qua `get_user_profile` (INFJ ↔ ENFP, sở thích chung: du lịch) và tính ra điểm tương thích cụ thể (60/100) có căn cứ — **giải quyết đúng và đủ nhu cầu người dùng**, minh chứng rõ giá trị của việc trang bị tool cho Agent.
+
+---
+
 ## 📝 Ghi chú
 Bảng điểm và test case trên dựa trên giả định luồng nghiệp vụ chuẩn của Cupid Agent (tra cứu hồ sơ → tính điểm tương thích → giải thích). Nếu nhóm đã có bộ tool/API cụ thể khác (ví dụ thêm tool phân tích lịch sử trò chuyện, tool gợi ý hoạt động hẹn hò...), nên cập nhật lại phần lý do đánh giá và test case cho khớp với trace log thực tế đã chạy.

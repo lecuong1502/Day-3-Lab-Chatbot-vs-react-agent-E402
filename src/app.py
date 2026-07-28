@@ -8,18 +8,15 @@ import os
 import sys
 from dotenv import load_dotenv
 
-# Đảm bảo import các module cùng thư mục src/ hoạt động mượt mà
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# Đảm bảo in ra Tiếng Việt và Emojis không bị lỗi trên Windows Console
 if sys.stdout.encoding != 'utf-8':
     try:
         sys.stdout.reconfigure(encoding='utf-8')
     except Exception:
         pass
 
-# Import các thành phần từ file của Role 2, Role 3 & Multi-Provider Adapter
-from tools import AVAILABLE_TOOLS, get_weather, search_flights
+from tools import AVAILABLE_TOOLS, get_user_profile, calculate_compatibility_score
 from prompts import CHATBOT_BASELINE_PROMPT, REACT_SYSTEM_PROMPT, MAX_ITERATIONS
 from providers import get_llm_provider
 
@@ -35,7 +32,8 @@ def load_test_cases():
         config_path = "test_cases.json"
         
     with open(config_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        data = json.load(f)
+        return data["test_cases"]
 
 
 def run_baseline_chatbot(user_query: str, provider):
@@ -62,16 +60,26 @@ def run_react_agent(user_query: str, provider):
         print(f"\n--- 🔄 Vòng lặp ReAct (Step {step}/{MAX_ITERATIONS}) ---")
         
         if step == 1:
-            print("🧠 Thought: Câu hỏi này cần tra cứu thời tiết thời gian thực.")
-            print("🛠️ Action: get_weather['Hà Nội']")
-            
-            # Thực thi tool
-            obs = get_weather("Hà Nội")
-            print(f"👁️ Observation: {obs}")
-            
+            print("🧠 Thought: Cần lấy hồ sơ của user_001 trước.")
+            print("🛠️ Action: get_user_profile['user_001']")
+
+            obs_a = get_user_profile("user_001")
+            print(f"👁️ Observation: {obs_a}")
+
         elif step == 2:
-            print("🧠 Thought: Tôi đã có thông tin thời tiết Hà Nội, giờ tôi có thể tư vấn trang phục.")
-            print("🏁 Final Answer: Thời tiết Hà Nội hôm nay 28°C, nắng nhẹ. Bạn nên mặc áo phông thoáng mát!")
+            print("🧠 Thought: Cần lấy thêm hồ sơ của user_002 để so sánh.")
+            print("🛠️ Action: get_user_profile['user_002']")
+
+            obs_b = get_user_profile("user_002")
+            print(f"👁️ Observation: {obs_b}")
+
+        elif step == 3:
+            print("🧠 Thought: Đã có đủ hồ sơ 2 người, giờ tính điểm tương thích.")
+            print("🛠️ Action: calculate_compatibility_score['user_001', 'user_002']")
+
+            obs_score = calculate_compatibility_score("user_001", "user_002")
+            print(f"👁️ Observation: {obs_score}")
+            print(f"🏁 Final Answer: {obs_score}")
             break
             
     if step >= MAX_ITERATIONS:
@@ -92,7 +100,7 @@ if __name__ == "__main__":
     print(f"✅ Đã tải thành công {len(tests)} Test Cases từ config/test_cases.json\n")
     
     # Chạy thử câu test số 3
-    sample_query = tests[2]["question"]
+    sample_query = tests[2]["query"]
     
     print("--- DEMO 1: CHẠY TRÊN CHATBOT BASELINE ---")
     run_baseline_chatbot(sample_query, provider)
